@@ -1,135 +1,125 @@
 // @ts-check
 
-const WIDTH = 1100
-const HEIGHT = 600
-const BIRB_COUNT = 150
-const VIEW_RADIUS = WIDTH / 10
+const WIDTH = 960
+const HEIGHT = 540
+const BIRB_COUNT = 100
+const VIEW_RADIUS = WIDTH / 16
 const VIEWING_ANGLE = (4 / 3) * Math.PI
 const HIGHLIGHT_FIRST_BIRB = false
+const SPEED_LIMIT = WIDTH / 9
 
-// https://stackoverflow.com/questions/4467539
-Number.prototype.mod = function(n) {
-  return ((this % n) + n) % n
-}
+const SEPARATION = 20
+const ALIGNMENT = 60
+const COHESION = 20
 
 /** @type {Birb[]} */
-const birbs = []
+let birbs = []
 
 function setup() {
+  createCanvas(WIDTH, HEIGHT)
+
   for (let i = 0; i < BIRB_COUNT; i++) {
     birbs.push({
-      position: new p5.Vector(random(WIDTH), random(HEIGHT)),
-      velocity: new p5.Vector(random(-100, 100), random(-100, 100)).normalize(),
+      position: new p5.Vector(random(WIDTH), random(HEIGHT), 0),
+      velocity: p5.Vector.random2D().setMag(SPEED_LIMIT),
+      acceleration: new p5.Vector(0, 0),
     })
   }
-  createCanvas(WIDTH, HEIGHT)
-  ellipseMode("center")
-  // frameRate(10)
 }
 
 function draw() {
   clear()
-  background(51)
-
-  fill(`rgba(255, 255, 255, 0.1)`)
-  ellipse(mouseX, mouseY, 200, 200)
+  background(40)
 
   for (const birb of birbs) {
-    noStroke()
+    drawBirb(birb)
 
-    if (HIGHLIGHT_FIRST_BIRB && birb === birbs[0]) {
-      fill("rgba(255, 255, 255, 0.1)")
-      arc(
-        birb.position.x,
-        birb.position.y,
-        VIEW_RADIUS * 2,
-        VIEW_RADIUS * 2,
-        birb.velocity.heading() - VIEWING_ANGLE / 2,
-        birb.velocity.heading() + VIEWING_ANGLE / 2,
-      )
-      fill("tomato")
-    } else {
-      fill("white")
+    let birbsInFieldOfView = 0
+    const cohesion = new p5.Vector(0, 0)
+    const separation = new p5.Vector(0, 0)
+    const alignment = new p5.Vector(0, 0)
+    const mouseForce = new p5.Vector(0, 0)
+
+    for (const otherBirb of birbs) {
+      if (otherBirb === birb) {
+        continue
+      }
+
+      const birbToBirb = p5.Vector.sub(otherBirb.position, birb.position)
+
+      const otherBirbInFieldOfView =
+        birbToBirb.mag() < VIEW_RADIUS &&
+        birbToBirb.angleBetween(birb.velocity) < VIEWING_ANGLE
+
+      if (otherBirbInFieldOfView) {
+        birbsInFieldOfView++
+
+        separation.add(birbToBirb.copy().setMag(birbToBirb.mag() - VIEW_RADIUS))
+        alignment.add(otherBirb.velocity.copy().normalize())
+        cohesion.add(p5.Vector.sub(otherBirb.position, birb.position))
+      }
     }
 
-    ellipse(birb.position.x, birb.position.y, 5, 5)
-    moveBirb(birb)
+    cohesion.div(birbsInFieldOfView)
+
+    if (mouseIsPressed) {
+      fill(`rgba(255, 255, 255, 0.003)`)
+      noStroke()
+      ellipse(mouseX, mouseY, 200)
+
+      mouseForce.add(
+        p5.Vector.sub(birb.position, new p5.Vector(mouseX, mouseY)),
+      )
+      mouseForce.setMag(Math.pow(3000 / mouseForce.mag(), 2))
+    }
+
+    birb.acceleration
+      .add(separation.mult(SEPARATION))
+      .add(alignment.mult(ALIGNMENT))
+      .add(cohesion.mult(COHESION))
+      .add(mouseForce.mult(1))
+
+    birb.velocity.add(birb.acceleration.mult(deltaTime / 1000.0))
+    birb.velocity.limit((30 / 100) * WIDTH)
+
+    birb.position.add(birb.velocity.copy().mult(deltaTime / 1000.0))
+    birb.position.x = positiveModulo(birb.position.x, WIDTH)
+    birb.position.y = positiveModulo(birb.position.y, HEIGHT)
+    birb.acceleration.limit(0)
   }
 }
 
 /** @type {(birb: Birb) => void} */
-function moveBirb(birb) {
-  birb.position.add(birb.velocity.copy().mult(deltaTime / 6))
+function drawBirb(birb) {
+  const directionOfTravel = birb.velocity.copy().setMag((1 / 100) * WIDTH)
+  const front = birb.position.copy().add(directionOfTravel)
+  const left = birb.position
+    .copy()
+    .add(directionOfTravel.copy().rotate((5 * Math.PI) / 6))
+  const right = birb.position
+    .copy()
+    .add(directionOfTravel.copy().rotate(-(5 * Math.PI) / 6))
 
-  birb.velocity.add(flock(birb)).setMag(1.5)
+  fill(800)
 
-  const loopedPosition = new p5.Vector(
-    birb.position.x.mod(WIDTH),
-    birb.position.y.mod(HEIGHT),
-  )
-
-  birb.position = loopedPosition
-}
-
-/** @type {(birb: Birb) => p5.Vector} */
-function flock(birb) {
-  const force = new p5.Vector(0, 0)
-
-  let nearbyBirbCount = 0
-  const center = new p5.Vector(0, 0)
-  const averageVelocity = new p5.Vector(0, 0)
-
-  for (const otherBirb of birbs) {
-    if (birb === otherBirb) continue
-
-    const between = otherBirb.position.copy().sub(birb.position)
-    const distance = between.mag()
-
-    if (
-      distance < VIEW_RADIUS &&
-      between.angleBetween(birb.velocity) < VIEWING_ANGLE / 2
-    ) {
-      nearbyBirbCount++
-      force.add(
-        between.mult(-1).setMag(Math.pow(VIEW_RADIUS - distance, 2) / 8),
-      )
-
-      center.add(otherBirb.position)
-      averageVelocity.add(otherBirb.velocity)
-
-      if (HIGHLIGHT_FIRST_BIRB && birb === birbs[0]) {
-        stroke(`rgba(255, 255, 255, ${1 - distance / VIEW_RADIUS})`)
-        line(
-          birb.position.x,
-          birb.position.y,
-          otherBirb.position.x,
-          otherBirb.position.y,
-        )
-      }
-    }
+  if (HIGHLIGHT_FIRST_BIRB && birb === birbs[0]) {
+    fill(`rgba(255, 255, 255, 0.1)`)
+    arc(
+      birb.position.x,
+      birb.position.y,
+      VIEW_RADIUS * 2,
+      VIEW_RADIUS * 2,
+      birb.velocity.heading() - VIEWING_ANGLE / 2,
+      birb.velocity.heading() + VIEWING_ANGLE / 2,
+    )
+    fill("red")
   }
 
-  if (nearbyBirbCount > 0) {
-    center.div(nearbyBirbCount)
-    averageVelocity.normalize()
-
-    const positionDiff = center.sub(birb.position)
-
-    force.add(positionDiff.mult(30))
-    force.add(averageVelocity.mult(700))
-  }
-
-  const birbToMouse = birb.position.copy().sub(new p5.Vector(mouseX, mouseY))
-  const distance = birbToMouse.mag()
-  birbToMouse.setMag(20000000 / Math.pow(distance, 2))
-  force.add(birbToMouse)
-  force.div(10000)
-
-  return force
+  noStroke()
+  triangle(front.x, front.y, left.x, left.y, right.x, right.y)
 }
 
-/** @type {(start: p5.Vector, vector: p5.Vector) => void} */
-function drawVector(start = new p5.Vector(0, 0), vector) {
-  stroke(255)
-  line(start.x, start.y, start.x + vector.x, start.y + vector.y)
+/** @type {(n: number, d: number) => number} */
+function positiveModulo(n, d) {
+  return ((n % d) + d) % d
 }
